@@ -16,7 +16,7 @@ from queue import SimpleQueue
 from sched import scheduler
 from traceback import format_exc
 from threading import Thread
-from time import sleep
+from time import sleep, time
 from typing import Any, DefaultDict, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from umsgpack import packb, unpackb
@@ -70,6 +70,8 @@ from protocol.v05 import (distance, preferred_compression, AckMessage, Address, 
 #       Treat as if it was a routed message for each target, except that the responses should contain lists of peers
 #       When forwarding, join messages together where possible. For instance, if 1000101..., is closest to targets A
 #          b, then send targets as [a, b]
+#       note that both this and the above are terrible algorithms that shouldn't stay around for too long
+#       produces |targets| * alpha ^ log_{2^b}(n) messages in the worst case, which is potentially very high
 
 # Overall Progress:
 
@@ -400,6 +402,21 @@ class KademliaNode:
                 self.logger.exception("Encountered an error in the heartbeat loop")
             sleep(0.01)
 
+    def is_active(self, channel: int, blocking: bool = False, timeout: float = float('nan')) -> bool:
+        """Return a bool indicating if a channel is active or not.
+
+        Optionally, block until it is active or the timeout expires. An active channel is defined as one that is both
+        registered and has active connections to other nodes.
+        """
+        if channel not in self.routing_table:
+            return False
+        if blocking:
+            while timeout > 0 and not self.routing_table[channel].member_info:
+                start = time()
+                sleep(0.01)
+                timeout -= time() - start
+        return not self.routing_table[channel].member_info
+
     def register_channel(
         self,
         name: str,
@@ -411,7 +428,7 @@ class KademliaNode:
         if subnet.channel in self.self_info.channels:
             self.logger.error("Someone tried to register channel %r, but it's taken!", subnet.channel)
             raise ValueError("That channel is already assigned, try again.")
-        id_ = urandom(subnet.h)
+        id_ = urandom(subnet.h)  # TODO: replace this with something deterministic
         self.self_info.channels[subnet.channel] = ChannelInfo(name, description, id_, subnet, proprietary)
         self.routing_table[subnet.channel] = RoutingTable(id_, subnet)
         self.schedule.enter(self.routing_table[subnet.channel].delay, 0, self.refresh, argument=(subnet.channel, ))
@@ -431,7 +448,8 @@ class KademliaNode:
             )
             for sock, addr in bootstrap_seeds:
                 self.connect(sock, addr, bootstrap_info.channel)
-            sleep(1)
+            if not self.is_active(bootstrap_info.channel, blocking=True, timeout=5):
+                raise RuntimeError("Could not connect to the bootstrap network in a reasonable timeframe. Try again?")
             self.refresh(bootstrap_info.channel)
 
         channel = self.self_info.channels[channel_id]
