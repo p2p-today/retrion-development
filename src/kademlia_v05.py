@@ -522,14 +522,22 @@ class KademliaNode:
         self.send_all(GoodbyeMessage(channel=channel))
         del self.routing_table[channel]
 
-    def _send(self, sock: socket.socket, addr: Tuple[Any, ...], message: Message, channel: Optional[int] = None):
+    def _send(
+        self,
+        sock: socket.socket,
+        addr: Tuple[Any, ...],
+        message: Message,
+        channel: Optional[int] = None,
+        peer: Optional[PeerInfo] = None
+    ):
         if channel is not None:
             message.channel = channel
         else:
             channel = message.channel
         message.sender = self.self_info.channels[channel].id
         message = message.with_time(self.tick())
-        peer = self.routing_table[channel].by_address(addr)
+        if peer is None:
+            peer = self.routing_table[channel].by_address(addr)
         if peer:
             message.compress = peer.local.compression
         else:

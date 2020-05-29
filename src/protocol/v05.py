@@ -814,8 +814,15 @@ class BroadcastMessage(Message):
     def react(self, node, addr, sock):
         """If unseen, propogate the message to your other peers.
 
-        Broadcasting in this strategy takes about (n-1)^2 messages. Note that unlike other react() methods, this one
-        has a meaningful return. True indicates that it is a new message, False that it's a repeat.
+        Broadcasting in this strategy will have n nodes send O(k * 2^b * log_{2^b}(n)) messages, assuming all nodes
+        agree on b. Note that early on this will appear to scale O(n^2), so for small groups consider using multicast
+        messages instead. This transition usually occurs around 5-10 nodes, but please consult your particular values
+        of k and b to be sure.
+
+        Note
+        ----
+        Unlike other react() methods, this one has a meaningful return. True indicates that it is a new message, False
+        that it's a repeat.
         """
         super().react(node, addr, sock)
         if (self.sender, self.seq) not in node.seen_broadcasts:
@@ -826,7 +833,7 @@ class BroadcastMessage(Message):
                     continue
                 if self.channel in peer.public.channels and peer.public.channels[self.channel].id == self.sender:
                     continue
-                node._send(node.socks[peer.local.sock], peer.local.addr, self)
+                node._send(node.socks[peer.local.sock], peer.local.addr, self, peer=peer)
             return True
         node.logger.debug("Got a repeat BROADCAST from %r (%r)", addr, self)
         return False
