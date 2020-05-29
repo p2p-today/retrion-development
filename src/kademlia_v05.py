@@ -542,7 +542,10 @@ class KademliaNode:
             message.compress = peer.local.compression
         else:
             message.compress = CompressType.PLAIN
-        if not isinstance(message, IdentifyMessage):  # IDENTIFY doesn't want an ACK, it wants a HELLO
+        # ACKs don't want an ACK
+        # IDENTIFY doesn't want an ACK, it wants a HELLO
+        # It's impractical to ACK a BROADCAST, just assume they got it
+        if not isinstance(message, (AckMessage, IdentifyMessage, BroadcastMessage)):
             self.awaiting_ack[message.seq] = message
 
             def stale():
