@@ -416,10 +416,9 @@ class KademliaNode:
         if channel not in self.routing_table:
             return False
         if blocking:
-            while timeout > 0 and not self.routing_table[channel].member_info:
-                start = time()
+            timeout += time()
+            while not self.routing_table[channel].member_info and timeout > time():
                 sleep(0.01)
-                timeout -= time() - start
         return bool(self.routing_table[channel].member_info)
 
     def register_channel(
@@ -438,13 +437,18 @@ class KademliaNode:
         self.routing_table[subnet.channel] = RoutingTable(id_, subnet)
         self.schedule.enter(self.routing_table[subnet.channel].delay, 0, self.refresh, argument=(subnet.channel, ))
 
-    def bootstrap(self, channel_id: int):
+    def bootstrap(self, channel_id: int, blocking: bool = False, timeout: float = float('inf')) -> bool:
         """Attempt to bootstrap a connection to your desired channel.
 
         Note that you must register the channel first. It is highly recommended that you keep a connection to the
         bootstrap network afterwards, as otherwise it will likely have very few nodes or your addition to the list of
         potential peers will expire.
+
+        Note
+        ----
+        Regardless of blocking/timeout, this function may block for up to one second.
         """
+        start = time()
         if bootstrap_info not in self.self_info.channels.values():
             self.register_channel(
                 name="Boostrapper",
@@ -456,7 +460,7 @@ class KademliaNode:
                     self.connect(sock, addr, bootstrap_info.channel)
                 except Exception:
                     self.logger.exception("Could not connect to %r", addr)
-            if not self.is_active(bootstrap_info.channel, blocking=True, timeout=5):
+            if not self.is_active(bootstrap_info.channel, blocking=True, timeout=max(timeout, 1)):
                 raise RuntimeError("Could not connect to the bootstrap network in a reasonable timeframe. Try again?")
             self.refresh(bootstrap_info.channel)
 
@@ -498,6 +502,8 @@ class KademliaNode:
             self.set(key, result, channel=bootstrap_info.channel)
 
         peers.add_done_callback(bootstrapper)
+        timeout -= time() - start
+        return self.is_active(channel_id, blocking, timeout)
 
     def connect(self, sock: int, addr: Tuple[Any, ...], channel: int):
         """Send an IDENTIFY message to your peer to kick off the connection process."""
