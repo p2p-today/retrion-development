@@ -64,9 +64,15 @@ class Address:
 
     __slots__ = ('addr_type', 'args')
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}{(self.addr_type, *self.args)}"
+
+    def __deepcopy__(self, memo=None) -> 'Address':
+        return unpackb(packb(self))
+
     def __init_subclass__(cls, **kwargs):
         """Ensure that subclasses are recognized by umsgpack."""
-        _ext_classes[cls] = 2
+        _ext_classes[cls] = 1
 
     def __new__(cls, addr_type: AddressType, *args: Any):
         """Redirect construction to the class indicated by addr_type."""
@@ -98,23 +104,16 @@ class Address:
 class UDPv4Address(Address):
     """Address type that specifically represents UDPv4 addresses."""
 
-    __slots__ = ('addr', 'port', 'addr_as_bytes')
+    __slots__ = ('addr', 'port')
 
-    def __init__(self, addr_type: AddressType, addr: Union[str, bytes], port: int):
+    def __init__(self, addr_type: AddressType, addr: str, port: int):
         super().__init__(addr_type, addr, port)
-        if isinstance(addr, bytes):
-            if len(addr) != 4:
-                raise ValueError("Addresses specified as bytes must be exactly 4 bytes long")
-            self.addr_as_bytes = addr
-            self.addr = '.'.join(str(x) for x in addr)
-        else:
-            self.addr = addr
-            self.addr_as_bytes = bytes(int(x) for x in addr.split('.'))
+        self.addr = addr
         self.port = port
 
     def packb(self) -> bytes:
         """Pack a UDPv4Address as a MessagePack bytestring."""
-        return packb((self.addr_type, self.addr_as_bytes, self.port))
+        return packb((self.addr_type, self.addr, self.port))
 
 
 class UDPv6Address(Address):
@@ -601,8 +600,14 @@ class FindKeyMessage(FindNodeMessage):
                 AckMessage(resp_seq=self.seq, status=2, channel=channel)
             )
             raise PermissionError("You can't store data on this channel!")
-        elif self.key in node.storage[channel] or self.target == channel_info.id or \
-                max(node.routing_table[channel].nearest(self.target, alpha)) < distance(self.target, channel_info.id):
+        responsible = False
+        if self.key in node.storage[channel] or self.target == channel_info.id:
+            responsible = True
+        if not responsible:
+            nearest = node.routing_table[channel].nearest(self.target, alpha)
+            if not nearest or max(nearest) < distance(self.target, channel_info.id):
+                responsible = True
+        if responsible:
             node._send(
                 sock,
                 addr,
@@ -671,7 +676,7 @@ class StoreKeyMessage(Message):
         nearest = node.routing_table[self.channel].nearest(self.target)
         if originator:
             rough_dist = 60  # minutes
-        elif nearest and dist < max(nearest):
+        elif not nearest or dist < max(nearest):
             rough_dist = 65
         else:
             rough_dist = 120 / dist.bit_length()
@@ -700,10 +705,11 @@ class StoreKeyMessage(Message):
         node.logger.debug("Got a STORE_KEY from %r (%r)", addr, self)
         super().react(node, addr, sock)
         subnet = node.self_info.channels[self.channel].subnet
+        status = 0
         if subnet.dht_disabled:
             status = 2
         else:
-            peers = node.routing_table[self.channel].nearest(self.target)
+            peers = list(node.routing_table[self.channel].nearest(self.target))
             dist = distance(node.self_info.channels[self.channel].id, self.target)
             if len(peers) < subnet.k:
                 peers.sort()
@@ -781,7 +787,7 @@ class IdentifyMessage(Message):
         """Send a HELLO back in leiu of an ACK."""
         node.logger.debug("Got an IDENTIFY request from %r (%r)", addr, self)
         super().react(node, addr, sock)
-        node._send_hello(sock, addr)
+        node._send_hello(sock, addr, self.channel)
 
 
 @Message.register(int(MessageType.BROADCAST))
@@ -796,7 +802,7 @@ class BroadcastMessage(Message):
         channel: int = 0,
         payload: Any = None
     ):
-        super().__init__(0, MessageType.BROADCAST, seq, sender, channel)
+        super().__init__(compress, MessageType.BROADCAST, seq, sender, channel)
         self.payload = payload
 
     @property
@@ -808,18 +814,22 @@ class BroadcastMessage(Message):
     def react(self, node, addr, sock):
         """If unseen, propogate the message to your other peers.
 
-        Broadcasting in this strategy takes about (n-1)^2 messages.
+        Broadcasting in this strategy takes about (n-1)^2 messages. Note that unlike other react() methods, this one
+        has a meaningful return. True indicates that it is a new message, False that it's a repeat.
         """
+        super().react(node, addr, sock)
         if (self.sender, self.seq) not in node.seen_broadcasts:
             node.logger.debug("Got a new BROADCAST from %r (%r)", addr, self)
             node.seen_broadcasts.add((self.sender, self.seq))
             for peer in node.routing_table[self.channel]:
-                if peer.public.name == self.sender or peer.local.addr == addr:
+                if peer.local.addr == addr:
+                    continue
+                if self.channel in peer.public.channels and peer.public.channels[self.channel].id == self.sender:
                     continue
                 node._send(node.socks[peer.local.sock], peer.local.addr, self)
-        else:
-            node.logger.debug("Got a repeat BROADCAST from %r (%r)", addr, self)
-        super().react(node, addr, sock)
+            return True
+        node.logger.debug("Got a repeat BROADCAST from %r (%r)", addr, self)
+        return False
 
 
 @Message.register(int(MessageType.GOODBYE))

@@ -95,8 +95,8 @@ bootstrap_info = NetworkConfiguration(channel=-1, k=6, b=4, h_name="SHA256")
 bootstrap_seeds = (
     (0, ('euclid.nmu.edu', 44565)),
     (0, ('williac.nmu.edu', 44565)),
-    (1, ('bato.host.gabeappleton.me', 44565)),
     (0, ('acai.host.gabeappleton.me', 44565)),
+    (0, ('bato.host.gabeappleton.me', 44565)),
 )
 
 
@@ -372,16 +372,16 @@ class KademliaNode:
                 if message.sender not in self.routing_table[channel]:
                     if isinstance(message, BroadcastMessage):
                         if message.sender != self.self_info.channels[channel].id:
-                            self._send(sock, addr, FindNodeMessage(target=message.sender))
+                            self._send(sock, addr, FindNodeMessage(target=message.sender, channel=channel))
                     else:
                         if self.routing_table[channel].add(message.sender, addr, self.socks.index(sock)):
-                            self._send_hello(sock, addr)
+                            self._send_hello(sock, addr, channel)
                             for key in self.storage[channel]:
                                 target = self.self_info.channels[channel].subnet.h_func(key).digest()
                                 nearest = self.routing_table[channel].nearest(target)
                                 if message.sender in (peer.public.name for peer in nearest.values()):
                                     self._send(
-                                        sock, addr, StoreKeyMessage(target=target, key=key, value=self.storage[key])
+                                        sock, addr, StoreKeyMessage(target=target, key=key, value=self.storage[channel][key], channel=channel)
                                     )
             except Exception:
                 self.errors.append(format_exc())
@@ -415,7 +415,7 @@ class KademliaNode:
                 start = time()
                 sleep(0.01)
                 timeout -= time() - start
-        return not self.routing_table[channel].member_info
+        return bool(self.routing_table[channel].member_info)
 
     def register_channel(
         self,
@@ -447,7 +447,10 @@ class KademliaNode:
                 subnet=bootstrap_info
             )
             for sock, addr in bootstrap_seeds:
-                self.connect(sock, addr, bootstrap_info.channel)
+                try:
+                    self.connect(sock, addr, bootstrap_info.channel)
+                except Exception:
+                    self.logger.exception("Could not connect to %r", addr)
             if not self.is_active(bootstrap_info.channel, blocking=True, timeout=5):
                 raise RuntimeError("Could not connect to the bootstrap network in a reasonable timeframe. Try again?")
             self.refresh(bootstrap_info.channel)
@@ -476,17 +479,17 @@ class KademliaNode:
                                 for address in info.addresses:
                                     try:
                                         if self.routing_table[channel].add(name, address.args, address.addr_type):
-                                            self._send(
+                                            self.connect(
                                                 address.addr_type,
                                                 address.args,
-                                                IdentifyMessage(channel=channel_id)
+                                                channel_id
                                             )
                                             self.routing_table[channel].member_info[name].public = info
                                         break
                                     except Exception:
                                         self.errors.append(format_exc())
-                                        self.logger.exception("I was unable to send a message to %r", addr)
-            result.append(self.self_info)
+                                        self.logger.exception("I was unable to send a message to %r", address)
+            result = (self.self_info, *result)
             self.set(key, result, channel=bootstrap_info.channel)
 
         peers.add_done_callback(bootstrapper)
@@ -534,8 +537,8 @@ class KademliaNode:
             self.schedule.enter(60, 100, stale)
         sock.sendto(packb(message), addr)
 
-    def _send_hello(self, sock: socket.socket, addr: Tuple[Any, ...]):
-        self._send(sock, addr, HelloMessage(kwargs=self.self_info))
+    def _send_hello(self, sock: socket.socket, addr: Tuple[Any, ...], channel: int):
+        self._send(sock, addr, HelloMessage(kwargs=self.self_info, channel=channel))
 
     def send_all(self, message: Message, channel: Optional[int] = None) -> int:
         """Send a message to every node in your routing table, returning the sum of how many were successful."""
