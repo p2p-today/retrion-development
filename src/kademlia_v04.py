@@ -18,9 +18,9 @@ from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from umsgpack import ext_serializable, packb, unpackb
 
-from protocol.v04 import (distance, preferred_compression, Address, AddressType, BroadcastMessage, CompressType,
-                          GlobalPeerInfo, HelloMessage, IdentifyMessage, Message, FindKeyMessage, FindNodeMessage,
-                          PeerInfo, StoreKeyMessage)
+from .protocol.v04 import (distance, preferred_compression, Address, AddressType, BroadcastMessage, CompressType,
+                           GlobalPeerInfo, HelloMessage, IdentifyMessage, Message, FindKeyMessage, FindNodeMessage,
+                           PeerInfo, StoreKeyMessage)
 
 
 @ext_serializable(3)

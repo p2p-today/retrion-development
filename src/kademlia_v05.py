@@ -21,9 +21,9 @@ from typing import Any, DefaultDict, Dict, Iterator, List, Optional, Set, Tuple,
 
 from umsgpack import packb, unpackb
 
-from protocol.v05 import (distance, preferred_compression, AckMessage, Address, AddressType, BroadcastMessage,
-                          ChannelInfo, CompressType, GlobalPeerInfo, GoodbyeMessage, HelloMessage, IdentifyMessage,
-                          Message, NetworkConfiguration, FindKeyMessage, FindNodeMessage, PeerInfo, StoreKeyMessage)
+from .protocol.v05 import (distance, preferred_compression, AckMessage, Address, AddressType, BroadcastMessage,
+                           ChannelInfo, CompressType, GlobalPeerInfo, GoodbyeMessage, HelloMessage, IdentifyMessage,
+                           Message, NetworkConfiguration, FindKeyMessage, FindNodeMessage, PeerInfo, StoreKeyMessage)
 
 # TODO: what happens if someone has a local address as the first item in addresses? do you send a message to them,
 # not see an exception, and just think they're not listening? There needs to be some mechanism to handle this.

@@ -6,10 +6,8 @@ from time import localtime
 from tkinter import Entry, Frame, StringVar, Text, Tk, Toplevel, BOTTOM, INSERT, X
 from typing import Optional, Sequence, Tuple
 
-from kademlia_v05 import KademliaNode
-from protocol.v05 import BroadcastMessage, Message, NetworkConfiguration
-
-basicConfig(level=DEBUG)
+from ..kademlia_v05 import KademliaNode
+from ..protocol.v05 import BroadcastMessage, Message, NetworkConfiguration
 
 
 class ChatNode(KademliaNode):
@@ -32,6 +30,7 @@ class ChatMessage(BroadcastMessage):
     ):
         super().__init__(compress, seq, sender, channel, payload)
         self.message_type = 16
+
     def react(self, node, addr, sock):
         if super().react(node, addr, sock):
             if not isinstance(self.payload, Sequence) or len(self.payload) != 2:
@@ -49,6 +48,7 @@ def make_window(port, username, root):
     input_user = StringVar()
     input_field = Entry(window, text=input_user)
     input_field.pack(side=BOTTOM, fill=X)
+
     def message_received(event):
         message = queue.get()
         sender_id, input_get = message.payload
@@ -57,6 +57,7 @@ def make_window(port, username, root):
             INSERT,
             '[%02i:%02i:%02i] %s: %s\n' % (t.tm_hour, t.tm_min, t.tm_sec, sender_id, input_get)
         )
+
     def enter_pressed(event):
         input_get = input_field.get()
         node.send_all(ChatMessage(channel=0, payload=(node.username, input_get)))
@@ -67,6 +68,7 @@ def make_window(port, username, root):
         )
         input_user.set('')
         return "break"
+
     frame = Frame(window)
     input_field.bind("<Return>", enter_pressed)
     input_field.bind("<<Message Received>>", message_received)
@@ -80,7 +82,9 @@ def make_window(port, username, root):
     node.bootstrap(0)
 
 
-root = Tk()
-make_window(44565, 'alice', root)
-make_window(44566, 'bob', root)
-root.mainloop()
+def main():
+    basicConfig(level=DEBUG)
+    root = Tk()
+    make_window(44565, 'alice', root)
+    make_window(44566, 'bob', root)
+    root.mainloop()
