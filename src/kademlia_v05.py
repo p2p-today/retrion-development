@@ -381,7 +381,12 @@ class KademliaNode:
                                 nearest = self.routing_table[channel].nearest(target)
                                 if message.sender in (peer.public.name for peer in nearest.values()):
                                     self._send(
-                                        sock, addr, StoreKeyMessage(target=target, key=key, value=self.storage[channel][key], channel=channel)
+                                        sock, addr, StoreKeyMessage(
+                                            target=target,
+                                            key=key,
+                                            value=self.storage[channel][key],
+                                            channel=channel
+                                        )
                                     )
             except Exception:
                 self.errors.append(format_exc())
