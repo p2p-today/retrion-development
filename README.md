@@ -9,11 +9,11 @@ applications significantly easier to develop. It seeks to provide the following:
 
 1. An object model and serialization standard that can be used easily in most languages
 2. A simple high-level API (along with a fine-grained one)
-3. $log(n)$ distributed hash table get/sets
+3. log(n) distributed hash table get/sets
 4. Support for disabling DHT support network-wide
 5. Support for "edge nodes" which do not store DHT data except as a cache
-6. $log(n)$ broadcast delivery time
-7. $log(n)$ routed message delivery
+6. log(n) broadcast delivery time
+7. log(n) routed message delivery
 8. Support for multicast routed messages
 9. Support for in-protocol group messages
 10. Transparent (to the developer) compression
