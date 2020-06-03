@@ -59,3 +59,26 @@ storage does not guarantee causal consistency, only eventual consistency.
 Provided is an example chat app. When the bootstrap network is active this will provide you two chat instances that
 find each other without hardcoded addresses or formulas. You can use this to show that Alice and Bob can talk to each
 other in an IRC-like way.
+
+# Current Work
+
+Currently I'm working on improving the efficiency of broadcast messages and trying to get a group messaging API in
+place, or at least allow for multicast messages.
+
+# Future Work
+
+At some point I'll need to tackle encryption, but I'm really reluctant to mess with that on my own, since I'm fairly
+inexperienced with cryptography or security in general.
+
+Probably the next batch of work will be on using multiple transport methods. I need some extra time to figure out what
+the implications of having nodes on a network that cannot directly connect with each other, and potential solutions
+around that. Additionally, some work needs to be done to ensure that this protocol can work well over a streaming API
+instead of a datagram one. Connection management presents a problem as well, though one that can probably be solved via
+a locally configured connection limit that defaults to something in the couple-hundreds.
+
+# Wild Brainstorming
+
+Seems like you could implement a SQLite engine on the k closest nodes that would always agree with each other, using
+only mild tweaking to the message send algorithm. Each transaction would be processed in order of the COMMIT's HLC
+timestamp with ties going to the node closest to the table name in question. There are additional race conditions that
+might occur though, and I don't know how to prevent them quite yet.
