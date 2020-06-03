@@ -23,7 +23,7 @@ applications significantly easier to develop. It seeks to provide the following:
 14. A well-defined standard configuration space
 15. Support for extension subprotocols and implementation-specific configurations
 
-Currently, this implementation meets 1, 3, 6, 10, 14, and 15.
+Currently, this implementation meets 1-4, 6, 10, and 14-15. That makes 8/15 goals.
 
 ## How Do I Use This?
 
@@ -47,7 +47,8 @@ messages also have a `react_response()` method that allows you to parse a respon
 
 ### Comparison to SocketIO
 
-`Message.react()` is analagous to `IO.on()`. `Message.react_response()` is analagous to `IO.emit()`'s `ack` argument.
+`Message.react()` is analagous to `io.Socket.on()`. `Message.react_response()` is analagous to `io.Socket.emit()`'s
+`ack` argument.
 
 ### Examples
 
