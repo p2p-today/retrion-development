@@ -9,11 +9,12 @@ from itertools import count
 from socket import SocketType
 from time import monotonic
 from traceback import format_exc
-from typing import overload, Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
+from typing import cast, overload, Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 from umsgpack import _ext_classes, ext_serializable, packb, unpackb
 
 from . import preferred_compression, BaseMessage, CompressType  # noqa: F401
+from ..kademlia_v05 import KademliaNode
 
 PROTOCOL_VERSION: int = 5
 
@@ -412,10 +413,10 @@ class Message(BaseMessage):
 
         return foo
 
-    def react(self, node, addr: Tuple[Any, ...], sock: SocketType):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Delay sending a PING to the sending node, since the connection is clearly active if you got a message."""
         try:
-            event = node.timeouts.pop((self.sender, ))
+            event = node.timeouts[self.channel].pop((self.sender, ))
             node.schedule.cancel(event)
         except (KeyError, ValueError):
             pass
@@ -423,9 +424,9 @@ class Message(BaseMessage):
         def ping():
             node._send(sock, addr, PingMessage(channel=self.channel))
 
-        node.timeouts[(self.sender, )] = node.schedule.enter(60, 2, ping)
+        node.timeouts[self.channel][(self.sender, )] = node.schedule.enter(60, 2, ping)
 
-    def react_response(self, ack: 'AckMessage', node, addr: Tuple[Any, ...], sock: SocketType):
+    def react_response(self, ack: 'AckMessage', node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Try to make it prominent when messages that don't need an ack register them for one."""
         node.logger.warning("Hey! I called react_response on a message that didn't implement it! %r", self)
 
@@ -464,7 +465,7 @@ class AckMessage(Message):
             return (*super()._data, self.resp_seq, self.status)
         return (*super()._data, self.resp_seq, self.status, self.data)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Clear the message from node.awaiting_ack and call the relevant react_response() method."""
         node.logger.debug("Got an %sACK from %r (%r)", 'N' if self.status else '', addr, self)
         super().react(node, addr, sock)
@@ -490,7 +491,7 @@ class PingMessage(Message):
     ):
         super().__init__(0, MessageType.PING, seq, sender, channel)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Since it's just a ping, we just send an ACK."""
         node.logger.debug("Got a PING from %r (%r)", addr, self)
         super().react(node, addr, sock)
@@ -518,7 +519,7 @@ class FindNodeMessage(Message):
     def _data(self):
         return (*super()._data, self.target)
 
-    def react(self, node, addr, sock, status=0):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType, status=0):
         """Send back a list of GlobalPeerInfo objects representing up to the k closest nodes to the target."""
         node.logger.debug("Got a FIND_NODE from %r (%r)", addr, self)
         super().react(node, addr, sock)
@@ -531,11 +532,17 @@ class FindNodeMessage(Message):
             channel=self.channel
         ))
 
-    def react_response(self, ack, node, addr, sock, message_constructor=PingMessage):
+    def react_response(
+        self,
+        ack: AckMessage,
+        node: KademliaNode,
+        addr: Tuple[Any, ...],
+        sock: SocketType,
+        message_constructor=PingMessage
+    ):
         """Attempt to connect to each of the nodes you were told about."""
         node.logger.debug("Got a response to a FIND_NODE from %r (%r, %r)", addr, self, ack)
-        for info in ack.data:
-            info: GlobalPeerInfo
+        for info in cast(Sequence[GlobalPeerInfo], ack.data):
             for channel, channel_info in info.channels.items():
                 if not channel_info.subnet.supported or channel not in node.self_info.channels:
                     continue
@@ -546,7 +553,11 @@ class FindNodeMessage(Message):
                         for address in info.addresses:
                             try:
                                 if node.routing_table[channel].add(name, address.args, address.addr_type):
-                                    node._send(address.addr_type, address.args, message_constructor())
+                                    node._send(
+                                        node.socks[address.addr_type],
+                                        address.args,
+                                        message_constructor()
+                                    )
                                     node.routing_table[channel].member_info[name].public = info
                                 break
                             except Exception:
@@ -581,7 +592,7 @@ class FindKeyMessage(FindNodeMessage):
     def _data(self):
         return (*super()._data, self.key)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType, status=0):
         """If you are responsible for a key, send it's value.
 
         Otherwise send the requesting node a list of GlobalPeerInfo objects representing up to the k closest nodes to
@@ -616,7 +627,14 @@ class FindKeyMessage(FindNodeMessage):
         else:
             super().react(node, addr, sock, status=1)
 
-    def react_response(self, ack, node, addr, sock):
+    def react_response(
+        self,
+        ack: AckMessage,
+        node: KademliaNode,
+        addr: Tuple[Any, ...],
+        sock: SocketType,
+        message_constructor=PingMessage
+    ):
         """Update the Future object related to the request."""
         if self.async_res is None:
             node.logger.debug("Got a duplicate response to a FIND_KEY from %r (%r, %r)", addr, self, ack)
@@ -634,7 +652,10 @@ class FindKeyMessage(FindNodeMessage):
                     value=ack.data,
                     channel=self.channel
                 ).with_time(node.tick())
-                msg._schedule_val_expire(node, distance(self.target, node.self_info.channels[self.channel].id))
+                msg._schedule_val_expire(  # type: ignore
+                    node,
+                    distance(self.target, node.self_info.channels[self.channel].id)
+                )
                 node._send(sock, addr, msg)
                 self.async_res.set_result(deepcopy(ack.data))
             self.async_res = None
@@ -700,7 +721,7 @@ class StoreKeyMessage(Message):
 
         node.timeouts[self.key] = node.schedule.enter(rough_dist * 60, 1, timeout)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """If you're responsible for a key, store it, otherwise NACK."""
         node.logger.debug("Got a STORE_KEY from %r (%r)", addr, self)
         super().react(node, addr, sock)
@@ -716,7 +737,7 @@ class StoreKeyMessage(Message):
                 peers = peers[:subnet.k]
             if self.target in node.storage[self.channel] or len(peers) < subnet.k or peers[-1] > dist:
                 try:
-                    node.schedule.cancel(node.timeouts.pop(self.target))
+                    node.schedule.cancel(node.timeouts[self.channel].pop(self.target))
                 except KeyError:
                     pass
                 node.storage[self.channel][self.key] = self.value
@@ -740,13 +761,15 @@ class HelloMessage(PingMessage):
     ):
         super().__init__(compress, seq, sender, channel)
         self.message_type = MessageType.HELLO
+        if kwargs is None:
+            raise TypeError("Missing required argument: kwargs")
         self.kwargs = kwargs
 
     @property
     def _data(self):
         return (*super()._data, self.kwargs)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """If you care about a node, record its global info and set local parameters accordingly."""
         node.logger.debug("Got a HELLO from %r (%r)", addr, self)
         if self.sender not in node.routing_table[self.channel]:
@@ -755,11 +778,11 @@ class HelloMessage(PingMessage):
             if self.sender in node.routing_table[self.channel]:
                 member_info = node.routing_table[self.channel].member_info[self.sender]
                 member_info.public = self.kwargs
-                member_info.local.compression = decide_compression(
+                member_info.local.compression = CompressType(decide_compression(
                     self.kwargs.compression,
                     node.preferred_compression,
                     self.sender > node.self_info.channels[self.channel].id
-                )
+                ))
                 node.routing_table[self.channel].member_info[self.sender] = member_info
         except Exception:
             node._send(sock, addr, AckMessage(resp_seq=self.seq, status=-1, channel=self.channel))
@@ -783,7 +806,7 @@ class IdentifyMessage(Message):
     ):
         super().__init__(0, MessageType.IDENTIFY, seq, sender, channel)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Send a HELLO back in leiu of an ACK."""
         node.logger.debug("Got an IDENTIFY request from %r (%r)", addr, self)
         super().react(node, addr, sock)
@@ -811,13 +834,13 @@ class BroadcastMessage(Message):
             return super()._data
         return (*super()._data, self.payload)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType) -> bool:
         """If unseen, propogate the message to your other peers.
 
         Broadcasting in this strategy will have n nodes send O(k * 2^b * log_{2^b}(n)) messages, assuming all nodes
         agree on b. Note that early on this will appear to scale O(n^2), so for small groups consider using multicast
-        messages instead. This transition usually occurs around 5-10 nodes, but please consult your particular values
-        of k and b to be sure.
+        messages instead. This transition usually occurs around 20-80 nodes, but please consult your particular
+        values of k, b, and h to be sure. It should be approximately (n-1)^2 = 2^b * hk * log_{2^b}(n)
 
         Note
         ----
@@ -852,11 +875,11 @@ class GoodbyeMessage(Message):
     ):
         super().__init__(0, MessageType.GOODBYE, seq, sender, channel)
 
-    def react(self, node, addr, sock):
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType):
         """Since it's just a GOODBYE, we get to delete everything about them."""
         node.logger.debug("Got a GOODBYE from %r (%r)", addr, self)
         try:
-            event = node.timeouts.pop((self.sender, ))
+            event = node.timeouts[self.channel].pop((self.sender, ))
             node.schedule.cancel(event)
         except (KeyError, ValueError):
             pass

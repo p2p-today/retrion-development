@@ -12,12 +12,16 @@ from functools import partial
 from itertools import chain
 from logging import getLogger
 from os import urandom
-from queue import SimpleQueue
 from sched import scheduler
 from traceback import format_exc
 from threading import Thread
 from time import sleep, time
 from typing import Any, DefaultDict, Dict, Iterator, List, Optional, Set, Tuple, Union
+
+try:
+    from queue import SimpleQueue  # added in 3.7
+except ImportError:
+    from queue import Queue as SimpleQueue  # type: ignore
 
 from umsgpack import packb, unpackb
 
