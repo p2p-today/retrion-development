@@ -45,6 +45,10 @@ by inheriting from the `Message` object and calling `Message.register()` on a re
 method called `react()` which allows them to parse and respond to messages, reconfiguring themselves as needed. Some
 messages also have a `react_response()` method that allows you to parse a response to said message.
 
+On subnets that enable this feature, you can use the `get()` and `set()` methods to modify shared global data which
+each node stores a portion of. Do note that any keys you set will expire if your node leaves the network, and that this
+storage does not guarantee causal consistency, only eventual consistency.
+
 ### Comparison to SocketIO
 
 `Message.react()` is analagous to `io.Socket.on()`. `Message.react_response()` is analagous to `io.Socket.emit()`'s
