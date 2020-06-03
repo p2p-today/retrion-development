@@ -591,8 +591,9 @@ class KademliaNode:
         if name not in self.routing_table[channel]:
             if name == self.self_info.channels[channel].id:
                 return False
-            self.routing_table[channel].register_refresh()
-            self.send_all(FindNodeMessage(target=name, channel=channel))
+            alpha = self.self_info.channels[channel].subnet.alpha
+            for peer in self.routing_table[channel].nearest(name, alpha).values():
+                self.send(peer.public.channels[channel].id, FindNodeMessage(target=name, channel=channel))
             raise RuntimeError("You don't have them in your contacts yet. Try again later.")
         peer_info = self.routing_table[channel].member_info[name].local
         self._send(self.socks[peer_info.sock], peer_info.addr, message)
