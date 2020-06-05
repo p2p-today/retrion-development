@@ -332,6 +332,18 @@ class LocalPeerInfo:
         self.misses = self.hits = 0
         self.channel = channel
 
+    @property
+    def score(self) -> float:
+        """Return a float which represents how 'valuable' this node is as a peer.
+
+        This tries to factor in both the ratio of hits to misses and the length of connection.
+        """
+        active_length = monotonic() - self.first_seen
+        if self.misses == 0:
+            return active_length
+        else:
+            return self.hits / (self.misses + self.hits) * active_length
+
 
 class MessageType(IntEnum):
     ACK = 0
@@ -611,7 +623,6 @@ class FindKeyMessage(FindNodeMessage):
         channel = self.channel
         channel_info = node.self_info.channels[channel]
         subnet = channel_info.subnet
-        alpha = subnet.alpha
         if subnet.dht_disabled:
             node._send(
                 sock,
@@ -623,7 +634,7 @@ class FindKeyMessage(FindNodeMessage):
         if self.key in node.storage[channel] or self.target == channel_info.id:
             responsible = True
         if not responsible:
-            nearest = node.routing_table[channel].nearest(self.target, alpha)
+            nearest = node.routing_table[channel].nearest(self.target)
             if not nearest or max(nearest) < distance(self.target, channel_info.id):
                 responsible = True
         if responsible:
@@ -946,6 +957,10 @@ class BroadcastMessage(Message):
         super().__init__(compress, MessageType.BROADCAST, seq, sender, channel)
         self.height = height
         self.payload = payload
+        if not isinstance(parallelization, int):
+            raise TypeError("p must be an integer")
+        if parallelization < 1:
+            raise ValueError("p must be at least 1")
         self.p = parallelization
 
     @property
@@ -986,7 +1001,11 @@ class BroadcastMessage(Message):
                 for bucket in bucket_group:
                     nodes = [peer for peer in bucket if peer != self.sender]
                     if len(bucket) > self.p:
-                        nodes = choices(nodes, k=self.p)
+                        nodes = choices(
+                            nodes,
+                            weights=[node.routing_table[self.channel].member_info[peer].local.score for peer in nodes],
+                            k=self.p
+                        )
                     for peer in nodes:
                         node.send_to(msg, peer, do_tick=False, originator=False)
             return True

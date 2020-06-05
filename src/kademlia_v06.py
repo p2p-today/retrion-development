@@ -12,6 +12,7 @@ from functools import partial
 from itertools import chain
 from logging import getLogger
 from os import urandom
+from random import choices
 from sched import scheduler
 from traceback import format_exc
 from threading import Thread
@@ -647,13 +648,18 @@ class KademliaNode:
         if use_local_storage and key in self.storage[channel]:
             ret.set_result(deepcopy(self.storage[channel][key]))
             return ret
-        nearest = self.routing_table[channel].nearest(target, subnet.alpha)
+        nearest = self.routing_table[channel].nearest(target)
         if not nearest or (use_local_storage and max(nearest) > distance(self.self_info.channels[channel].id, target)):
             ret.set_result(None)
             return ret
+        selection = choices(
+            tuple(nearest.values()),
+            weights=[peer.local.score for peer in nearest.values()],
+            k=subnet.alpha
+        )
         msg = FindKeyMessage(target=target, key=key, channel=channel)
         msg.async_res = ret
-        for peer in nearest.values():
+        for peer in selection:
             self._send(self.socks[peer.local.sock], peer.local.addr, msg)
         return ret
 
