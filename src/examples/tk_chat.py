@@ -4,8 +4,8 @@ from time import localtime
 from tkinter import Entry, Frame, StringVar, Text, Tk, Toplevel, BOTTOM, INSERT, X
 from typing import Optional, Sequence, Tuple
 
-from ..kademlia_v05 import KademliaNode
-from ..protocol.v05 import BroadcastMessage, Message, NetworkConfiguration
+from ..kademlia_v06 import KademliaNode
+from ..protocol.v06 import BroadcastMessage, Message, NetworkConfiguration
 
 
 def main():
@@ -37,9 +37,11 @@ class ChatMessage(BroadcastMessage):
         seq: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
-        payload: Optional[str] = None
+        height: int = 0,
+        payload: Optional[str] = None,
+        parallelization: int = 3
     ):
-        super().__init__(compress, seq, sender, channel, payload)
+        super().__init__(compress, seq, sender, channel, height, payload, parallelization)
         self.message_type = 128  # make sure it sets the correct message type or it will deserialize as BroadcastMessage
 
     def react(self, node, addr, sock):
