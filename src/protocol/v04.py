@@ -230,7 +230,7 @@ class Message(BaseMessage):
     def increment_seq(self) -> 'Message':
         """Return a copy with an increased seq field."""
         ret = copy(self)
-        ret.seq = next(message_counter)
+        ret.nonce = next(message_counter)
         return ret
 
     @staticmethod
@@ -256,13 +256,13 @@ class Message(BaseMessage):
         super().__init__(PROTOCOL_VERSION, compress, sender)
         self.message_type = message_type
         if seq is None:
-            self.seq = next(message_counter)
+            self.nonce = next(message_counter)
         else:
-            self.seq = seq
+            self.nonce = seq
 
     @property
     def _data(self):
-        return (self.message_type, self.seq, self.sender)
+        return (self.message_type, self.nonce, self.sender)
 
     @overload
     @staticmethod
@@ -365,7 +365,7 @@ class PingMessage(Message):
         """Since it's just a ping, we just send an ACK."""
         node.logger.debug("Got a PING from %r (%r)", addr, self)
         super().react(node, addr, sock)
-        node._send(sock, addr, AckMessage(resp_seq=self.seq))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce))
 
 
 @Message.register(int(MessageType.FIND_NODE))
@@ -387,7 +387,7 @@ class FindNodeMessage(Message):
         node.logger.debug("Got a FIND_NODE from %r (%r)", addr, self)
         super().react(node, addr, sock)
         node._send(sock, addr, AckMessage(
-            resp_seq=self.seq, data=tuple(peer.public for peer in node.routing_table.nearest(self.target).values())
+            resp_seq=self.nonce, data=tuple(peer.public for peer in node.routing_table.nearest(self.target).values())
         ))
 
     def react_response(self, ack, node, addr, sock, message_constructor=PingMessage):
@@ -440,7 +440,7 @@ class FindKeyMessage(FindNodeMessage):
         if self.key in node.storage or self.target == node.id or \
            max(node.routing_table.nearest(self.target)) < distance(self.target, node.id):
             Message.react(self, node, addr, sock)
-            node._send(sock, addr, AckMessage(resp_seq=self.seq, data=node.storage.get(self.key)))
+            node._send(sock, addr, AckMessage(resp_seq=self.nonce, data=node.storage.get(self.key)))
         else:
             super().react(node, addr, sock)
 
@@ -520,7 +520,7 @@ class StoreKeyMessage(Message):
             self._schedule_val_expire(node, dist)
         else:
             status = -1
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, status=status))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce, status=status))
 
 
 @Message.register(int(MessageType.HELLO))
@@ -555,9 +555,9 @@ class HelloMessage(PingMessage):
                     self.sender > node.id
                 )
         except Exception:
-            node._send(sock, addr, AckMessage(resp_seq=self.seq, status=-1))
+            node._send(sock, addr, AckMessage(resp_seq=self.nonce, status=-1))
             return
-        node._send(sock, addr, AckMessage(resp_seq=self.seq))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce))
         Message.react(self, node, addr, sock)
 
 
@@ -593,9 +593,9 @@ class BroadcastMessage(Message):
 
         Broadcasting in this strategy takes about (n-1)^2 messages.
         """
-        if (self.sender, self.seq) not in node.seen_broadcasts:
+        if (self.sender, self.nonce) not in node.seen_broadcasts:
             node.logger.debug("Got a new BROADCAST from %r (%r)", addr, self)
-            node.seen_broadcasts.add((self.sender, self.seq))
+            node.seen_broadcasts.add((self.sender, self.nonce))
             for peer in node.routing_table:
                 if peer.public.name == self.sender or peer.local.addr == addr:
                     continue

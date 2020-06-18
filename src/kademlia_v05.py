@@ -261,6 +261,7 @@ class KademliaNode:
         '_local_time': 'The local HLC timestamp of this node',
         'errors': 'The formatted error and tracebacks of problems this node has encountered in its daemons',
         'self_info': 'The GlobalPeerInfo object describing this node',
+        'groups': 'A mapping of group names you are a member of to the list of members',
     }
 
     def __init__(self, port: int):
@@ -278,6 +279,7 @@ class KademliaNode:
         self.message_queue: SimpleQueue[Tuple[Message, Tuple[Any, ...], socket.socket]] = SimpleQueue()
         self.storage: DefaultDict[int, Dict[bytes, Any]] = defaultdict(dict)
         self.timeouts: DefaultDict[int, Dict[Union[bytes, Tuple[bytes]], Any]] = defaultdict(dict)
+        self.groups: DefaultDict[int, DefaultDict[str, List[bytes]]] = defaultdict(lambda: defaultdict(list))
         self.daemons: List[Thread] = []
         self.addresses: List[Address] = []
         self.seen_broadcasts: Set[Tuple[bytes, Tuple[int, int]]] = set()
@@ -360,9 +362,9 @@ class KademliaNode:
                 message, addr, sock = self.message_queue.get()
                 channel = message.channel
                 # update local time
-                physical = max((self._local_time[0], message.seq[0], time_func()))
-                if physical in (self._local_time[0], message.seq[0]):
-                    logical = max((self._local_time, message.seq))[0] + 1
+                physical = max((self._local_time[0], message.nonce[0], time_func()))
+                if physical in (self._local_time[0], message.nonce[0]):
+                    logical = max((self._local_time, message.nonce))[0] + 1
                 else:
                     logical = 0
                 self._local_time = (physical, logical)
@@ -550,12 +552,12 @@ class KademliaNode:
         # IDENTIFY doesn't want an ACK, it wants a HELLO
         # It's impractical to ACK a BROADCAST, just assume they got it
         if not isinstance(message, (AckMessage, IdentifyMessage, BroadcastMessage)):
-            self.awaiting_ack[message.seq] = message
+            self.awaiting_ack[message.nonce] = message
 
             def stale():
                 """If a message wasn't ACK'd, mark a miss."""
-                if message.seq in self.awaiting_ack:
-                    del self.awaiting_ack[message.seq]
+                if message.nonce in self.awaiting_ack:
+                    del self.awaiting_ack[message.nonce]
                     peer = self.routing_table[channel].by_address(addr)
                     if peer:
                         peer.local.misses += 1
@@ -598,6 +600,24 @@ class KademliaNode:
         peer_info = self.routing_table[channel].member_info[name].local
         self._send(self.socks[peer_info.sock], peer_info.addr, message)
         return True
+
+    def send_to(
+        self,
+        message: Message,
+        target: bytes,
+        *extra_targets: bytes,
+        group_name: Optional[str] = None,
+        channel: Optional[int] = None
+    ):
+        if channel is not None:
+            message.channel = channel
+        else:
+            channel = message.channel
+        if group_name:
+            return self.send_to(message, target, *extra_targets, *self.groups[channel][group_name])
+        if not extra_targets:
+            return self.send(target, message)
+        raise NotImplementedError()
 
     def get(self, key: bytes, channel: int = 0, use_local_storage: bool = True) -> 'Future[Any]':
         """Fetch a value from the distributed hash table.

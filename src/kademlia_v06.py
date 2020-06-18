@@ -326,18 +326,37 @@ class KademliaNode:
             self._local_time = (self._local_time[0], self._local_time[1] + 1)
         return self._local_time
 
+    def refresh_for(self, channel: int, peer: bytes):
+        """Search for new peers from a given peer."""
+        self.logger.debug("Refreshing from %r", peer)
+        channels = set(self.self_info.channels)
+        try:
+            channels = channels.intersection(self.routing_table[channel].member_info[peer].public.channels)
+        except Exception:
+            pass
+        channels |= {channel}
+        for channel in channels:
+            for bit_length, bucket_group in enumerate(self.routing_table[channel].table):
+                channel_info = self.self_info.channels[channel]
+                dist = bit_length * (self.self_info.channels[channel].subnet.b - 1)
+                for prefix, bucket in enumerate(bucket_group, start=1):
+                    subnet = channel_info.subnet
+                    xored = (int.from_bytes(channel_info.id, 'big') ^ ((prefix << dist))).to_bytes(subnet.h, 'big')
+                    if len(bucket) < subnet.k and subnet.k.bit_length() <= dist * subnet.b:
+                        self.send_to(FindNodeMessage(target=xored, channel=channel), target=peer)
+
     def refresh(self, channel: int):
         """Search for new peers and clear ones which are largely unresponsive."""
         self.logger.debug("Refreshing lower-than-k buckets")
         self.routing_table[channel].register_refresh()
         for bit_length, bucket_group in enumerate(self.routing_table[channel].table):
             channel_info = self.self_info.channels[channel]
-            dist = bit_length * (self.self_info.channels[channel].subnet.b - 1)
+            dist = bit_length * (self.self_info.channels[channel].subnet.b)
             for prefix, bucket in enumerate(bucket_group, start=1):
                 subnet = channel_info.subnet
                 xored = (int.from_bytes(channel_info.id, 'big') ^ ((prefix << dist))).to_bytes(subnet.h, 'big')
-                if len(bucket) < subnet.k and subnet.k.bit_length() <= dist * subnet.b:
-                    self.send_all(FindNodeMessage(target=xored))
+                if len(bucket) < min(1 << (bit_length * subnet.b), subnet.k):
+                    self.send_all(FindNodeMessage(target=xored, channel=channel))
         self.schedule.enter(self.routing_table[channel].delay, 0, self.refresh, argument=(channel, ))
 
     def listen_loop(self, sock: socket.socket):
@@ -360,9 +379,9 @@ class KademliaNode:
                 message, addr, sock = self.message_queue.get()
                 channel = message.channel
                 # update local time
-                physical = max((self._local_time[0], message.seq[0], time_func()))
-                if physical in (self._local_time[0], message.seq[0]):
-                    logical = max((self._local_time, message.seq))[0] + 1
+                physical = max((self._local_time[0], message.nonce[0], time_func()))
+                if physical in (self._local_time[0], message.nonce[0]):
+                    logical = max((self._local_time, message.nonce))[0] + 1
                 else:
                     logical = 0
                 self._local_time = (physical, logical)
@@ -554,12 +573,12 @@ class KademliaNode:
         # IDENTIFY doesn't want an ACK, it wants a HELLO
         # It's impractical to ACK a BROADCAST, just assume they got it
         if not isinstance(message, (AckMessage, IdentifyMessage, FloodMessage, BroadcastMessage)):
-            self.awaiting_ack[message.seq] = message
+            self.awaiting_ack[message.nonce] = message
 
             def stale():
                 """If a message wasn't ACK'd, mark a miss."""
-                if message.seq in self.awaiting_ack:
-                    del self.awaiting_ack[message.seq]
+                if message.nonce in self.awaiting_ack:
+                    del self.awaiting_ack[message.nonce]
                     peer = self.routing_table[channel].by_address(addr)
                     if peer:
                         peer.local.misses += 1

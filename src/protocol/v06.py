@@ -360,14 +360,14 @@ class MessageType(IntEnum):
 
 class Message(BaseMessage):
     __slots__ = {
-        "seq": "The Hybrid Logical Clock timestamp of the message. Formerly the sequence number.",
+        "nonce": "The Hybrid Logical Clock timestamp of the message. Formerly the sequence number.",
         "channel": "The multiplex channel the message was sent on",
     }
 
     def with_time(self, t: Tuple[int, int]) -> 'Message':
         """Return a copy of the message with the specified HLC timestamp."""
         ret = copy(self)
-        ret.seq = t
+        ret.nonce = t
         return ret
 
     @staticmethod
@@ -387,18 +387,18 @@ class Message(BaseMessage):
         self,
         compress: int = 0,
         message_type: int = MessageType.ACK,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0
     ):
         super().__init__(PROTOCOL_VERSION, compress, sender)
         self.message_type = message_type
         self.channel = channel
-        self.seq = seq or (0, 0)
+        self.nonce = nonce or (0, 0)
 
     @property
     def _data(self):
-        return (self.message_type, self.seq, self.sender, self.channel)
+        return (self.message_type, self.nonce, self.sender, self.channel)
 
     @overload
     @staticmethod
@@ -457,7 +457,7 @@ message_types: Dict[int, Type[Message]] = {}
 @Message.register(int(MessageType.ACK))
 class AckMessage(Message):
     __slots__ = {
-        "resp_seq": "The Hybrid Logical Clock timestamp of the message you are responding to",
+        "resp_nonce": "The Hybrid Logical Clock timestamp of the message you are responding to",
         "status": "The error number of the response (0 is good)",
         "data": "Any ancillary data to go with the message"
     }
@@ -465,15 +465,15 @@ class AckMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
-        resp_seq: Tuple[int, int] = (0, 0),
+        resp_nonce: Tuple[int, int] = (0, 0),
         status: int = 0,
         data: Any = None
     ):
-        super().__init__(compress, MessageType.ACK, seq, sender, channel)
-        self.resp_seq: Tuple[int, int] = resp_seq
+        super().__init__(compress, MessageType.ACK, nonce, sender, channel)
+        self.resp_nonce: Tuple[int, int] = resp_nonce
         self.status = status
         self.data = data
 
@@ -481,9 +481,9 @@ class AckMessage(Message):
     def _data(self):
         if self.data is None:
             if self.status == 0:
-                return (*super()._data, self.resp_seq)
-            return (*super()._data, self.resp_seq, self.status)
-        return (*super()._data, self.resp_seq, self.status, self.data)
+                return (*super()._data, self.resp_nonce)
+            return (*super()._data, self.resp_nonce, self.status)
+        return (*super()._data, self.resp_nonce, self.status, self.data)
 
     def react(self, node: 'kademlia_v06.KademliaNode', addr: Tuple[Any, ...], sock: SocketType):
         """Clear the message from node.awaiting_ack and call the relevant react_response() method."""
@@ -493,9 +493,9 @@ class AckMessage(Message):
             node.routing_table[self.channel].member_info[self.sender].local.hits += 1
         except KeyError:
             pass
-        if self.resp_seq in node.awaiting_ack:
-            node.awaiting_ack[self.resp_seq].react_response(self, node, addr, sock)
-            del node.awaiting_ack[self.resp_seq]
+        if self.resp_nonce in node.awaiting_ack:
+            node.awaiting_ack[self.resp_nonce].react_response(self, node, addr, sock)
+            del node.awaiting_ack[self.resp_nonce]
 
 
 @Message.register(int(MessageType.PING))
@@ -505,17 +505,17 @@ class PingMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0
     ):
-        super().__init__(0, MessageType.PING, seq, sender, channel)
+        super().__init__(0, MessageType.PING, nonce, sender, channel)
 
     def react(self, node: 'kademlia_v06.KademliaNode', addr: Tuple[Any, ...], sock: SocketType):
         """Since it's just a ping, we just send an ACK."""
         node.logger.debug("Got a PING from %r (%r)", addr, self)
         super().react(node, addr, sock)
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_nonce=self.nonce, channel=self.channel))
 
 
 @Message.register(int(MessageType.FIND_NODE))
@@ -527,12 +527,12 @@ class FindNodeMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         target: bytes = b''
     ):
-        super().__init__(compress, MessageType.FIND_NODE, seq, sender, channel)
+        super().__init__(compress, MessageType.FIND_NODE, nonce, sender, channel)
         self.target = target
 
     @property
@@ -546,7 +546,7 @@ class FindNodeMessage(Message):
         table = node.routing_table[self.channel]
         alpha = node.self_info.channels[self.channel].subnet.alpha
         node._send(sock, addr, AckMessage(
-            resp_seq=self.seq,
+            resp_nonce=self.nonce,
             status=status,
             data=tuple(peer.public for peer in table.nearest(self.target, alpha).values()),
             channel=self.channel
@@ -596,13 +596,13 @@ class FindKeyMessage(FindNodeMessage):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         target: bytes = b'',
         key: bytes = b''
     ):
-        super().__init__(compress, seq, sender, channel, target)
+        super().__init__(compress, nonce, sender, channel, target)
         self.key = key
         self.message_type = MessageType.FIND_KEY
         self.async_res: 'Optional[Future[Any]]' = None
@@ -627,7 +627,7 @@ class FindKeyMessage(FindNodeMessage):
             node._send(
                 sock,
                 addr,
-                AckMessage(resp_seq=self.seq, status=2, channel=channel)
+                AckMessage(resp_nonce=self.nonce, status=2, channel=channel)
             )
             raise PermissionError("You can't store data on this channel!")
         responsible = False
@@ -641,7 +641,7 @@ class FindKeyMessage(FindNodeMessage):
             node._send(
                 sock,
                 addr,
-                AckMessage(resp_seq=self.seq, data=node.storage[channel].get(self.key), channel=channel)
+                AckMessage(resp_nonce=self.nonce, data=node.storage[channel].get(self.key), channel=channel)
             )
         else:
             super().react(node, addr, sock, status=1)
@@ -691,14 +691,14 @@ class StoreKeyMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         target: bytes = b'',
         key: bytes = b'',
         value: Any = None
     ):
-        super().__init__(compress, MessageType.STORE_KEY, seq, sender, channel)
+        super().__init__(compress, MessageType.STORE_KEY, nonce, sender, channel)
         self.target = target
         self.key = key
         self.value = value
@@ -763,7 +763,7 @@ class StoreKeyMessage(Message):
                 self._schedule_val_expire(node, dist)
             else:
                 status = -1
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, status=status, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_nonce=self.nonce, status=status, channel=self.channel))
         if status == 2:
             raise PermissionError("You can't store data on this channel!")
 
@@ -773,12 +773,12 @@ class HelloMessage(PingMessage):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         kwargs: GlobalPeerInfo = None
     ):
-        super().__init__(compress, seq, sender, channel)
+        super().__init__(compress, nonce, sender, channel)
         self.message_type = MessageType.HELLO
         if kwargs is None:
             raise TypeError("Missing required argument: kwargs")
@@ -803,12 +803,13 @@ class HelloMessage(PingMessage):
                     self.sender > node.self_info.channels[self.channel].id
                 ))
                 node.routing_table[self.channel].member_info[self.sender] = member_info
+                node.refresh_for(self.channel, self.sender)
         except Exception:
-            node._send(sock, addr, AckMessage(resp_seq=self.seq, status=-1, channel=self.channel))
+            node._send(sock, addr, AckMessage(resp_nonce=self.nonce, status=-1, channel=self.channel))
             node.errors.append(format_exc())
             node.logger.exception("I ran into an issue in HELLO.react() %r", self)
             return
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_nonce=self.nonce, channel=self.channel))
         Message.react(self, node, addr, sock)
 
 
@@ -819,11 +820,11 @@ class IdentifyMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0
     ):
-        super().__init__(0, MessageType.IDENTIFY, seq, sender, channel)
+        super().__init__(0, MessageType.IDENTIFY, nonce, sender, channel)
 
     def react(self, node: 'kademlia_v06.KademliaNode', addr: Tuple[Any, ...], sock: SocketType):
         """Send a HELLO back in leiu of an ACK."""
@@ -839,11 +840,11 @@ class GoodbyeMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0
     ):
-        super().__init__(0, MessageType.GOODBYE, seq, sender, channel)
+        super().__init__(0, MessageType.GOODBYE, nonce, sender, channel)
 
     def react(self, node: 'kademlia_v06.KademliaNode', addr: Tuple[Any, ...], sock: SocketType):
         """Since it's just a GOODBYE, we get to delete everything about them."""
@@ -875,12 +876,12 @@ class FloodMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         payload: Any = None
     ):
-        super().__init__(compress, MessageType.FLOOD, seq, sender, channel)
+        super().__init__(compress, MessageType.FLOOD, nonce, sender, channel)
         self.payload = payload
 
     @property
@@ -898,9 +899,9 @@ class FloodMessage(Message):
         that it's a repeat.
         """
         super().react(node, addr, sock)
-        if (self.sender, self.seq) not in node.seen_broadcasts:
+        if (self.sender, self.nonce) not in node.seen_broadcasts:
             node.logger.debug("Got a new FLOOD from %r (%r)", addr, self)
-            node.seen_broadcasts.add((self.sender, self.seq))
+            node.seen_broadcasts.add((self.sender, self.nonce))
             for peer in node.routing_table[self.channel]:
                 if peer.local.addr == addr:
                     continue
@@ -947,14 +948,14 @@ class BroadcastMessage(Message):
     def __init__(
         self,
         compress: int = 0,
-        seq: Optional[Tuple[int, int]] = None,
+        nonce: Optional[Tuple[int, int]] = None,
         sender: bytes = b'',
         channel: int = 0,
         height: int = 0,
         payload: Any = None,
         parallelization: int = 3
     ):
-        super().__init__(compress, MessageType.BROADCAST, seq, sender, channel)
+        super().__init__(compress, MessageType.BROADCAST, nonce, sender, channel)
         self.height = height
         self.payload = payload
         if not isinstance(parallelization, int):
@@ -988,9 +989,9 @@ class BroadcastMessage(Message):
         that it's a repeat.
         """
         super().react(node, addr, sock)
-        if (self.sender, self.seq) not in node.seen_broadcasts:
+        if (self.sender, self.nonce) not in node.seen_broadcasts:
             node.logger.debug("Got a new BROADCAST from %r (%r)", addr, self)
-            node.seen_broadcasts.add((self.sender, self.seq))
+            node.seen_broadcasts.add((self.sender, self.nonce))
             b = node.routing_table[self.channel].config.b
             for group_height, bucket_group in enumerate(node.routing_table[self.channel].table):
                 # TODO: add method to get table without b

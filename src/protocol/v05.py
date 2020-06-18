@@ -342,6 +342,7 @@ class MessageType(IntEnum):
     IDENTIFY = 6
     BROADCAST = 7
     GOODBYE = 8
+    ADD_GROUP = 9
 
 
 class Message(BaseMessage):
@@ -353,7 +354,7 @@ class Message(BaseMessage):
     def with_time(self, t: Tuple[int, int]) -> 'Message':
         """Return a copy of the message with the specified HLC timestamp."""
         ret = copy(self)
-        ret.seq = t
+        ret.nonce = t
         return ret
 
     @staticmethod
@@ -380,11 +381,11 @@ class Message(BaseMessage):
         super().__init__(PROTOCOL_VERSION, compress, sender)
         self.message_type = message_type
         self.channel = channel
-        self.seq = seq or (0, 0)
+        self.nonce = seq or (0, 0)
 
     @property
     def _data(self):
-        return (self.message_type, self.seq, self.sender, self.channel)
+        return (self.message_type, self.nonce, self.sender, self.channel)
 
     @overload
     @staticmethod
@@ -495,7 +496,7 @@ class PingMessage(Message):
         """Since it's just a ping, we just send an ACK."""
         node.logger.debug("Got a PING from %r (%r)", addr, self)
         super().react(node, addr, sock)
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce, channel=self.channel))
 
 
 @Message.register(int(MessageType.FIND_NODE))
@@ -526,7 +527,7 @@ class FindNodeMessage(Message):
         table = node.routing_table[self.channel]
         alpha = node.self_info.channels[self.channel].subnet.alpha
         node._send(sock, addr, AckMessage(
-            resp_seq=self.seq,
+            resp_seq=self.nonce,
             status=status,
             data=tuple(peer.public for peer in table.nearest(self.target, alpha).values()),
             channel=self.channel
@@ -608,7 +609,7 @@ class FindKeyMessage(FindNodeMessage):
             node._send(
                 sock,
                 addr,
-                AckMessage(resp_seq=self.seq, status=2, channel=channel)
+                AckMessage(resp_seq=self.nonce, status=2, channel=channel)
             )
             raise PermissionError("You can't store data on this channel!")
         responsible = False
@@ -622,7 +623,7 @@ class FindKeyMessage(FindNodeMessage):
             node._send(
                 sock,
                 addr,
-                AckMessage(resp_seq=self.seq, data=node.storage[channel].get(self.key), channel=channel)
+                AckMessage(resp_seq=self.nonce, data=node.storage[channel].get(self.key), channel=channel)
             )
         else:
             super().react(node, addr, sock, status=1)
@@ -744,7 +745,7 @@ class StoreKeyMessage(Message):
                 self._schedule_val_expire(node, dist)
             else:
                 status = -1
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, status=status, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce, status=status, channel=self.channel))
         if status == 2:
             raise PermissionError("You can't store data on this channel!")
 
@@ -785,11 +786,11 @@ class HelloMessage(PingMessage):
                 ))
                 node.routing_table[self.channel].member_info[self.sender] = member_info
         except Exception:
-            node._send(sock, addr, AckMessage(resp_seq=self.seq, status=-1, channel=self.channel))
+            node._send(sock, addr, AckMessage(resp_seq=self.nonce, status=-1, channel=self.channel))
             node.errors.append(format_exc())
             node.logger.exception("I ran into an issue in HELLO.react() %r", self)
             return
-        node._send(sock, addr, AckMessage(resp_seq=self.seq, channel=self.channel))
+        node._send(sock, addr, AckMessage(resp_seq=self.nonce, channel=self.channel))
         Message.react(self, node, addr, sock)
 
 
@@ -848,9 +849,9 @@ class BroadcastMessage(Message):
         that it's a repeat.
         """
         super().react(node, addr, sock)
-        if (self.sender, self.seq) not in node.seen_broadcasts:
+        if (self.sender, self.nonce) not in node.seen_broadcasts:
             node.logger.debug("Got a new BROADCAST from %r (%r)", addr, self)
-            node.seen_broadcasts.add((self.sender, self.seq))
+            node.seen_broadcasts.add((self.sender, self.nonce))
             for peer in node.routing_table[self.channel]:
                 if peer.local.addr == addr:
                     continue
@@ -885,3 +886,43 @@ class GoodbyeMessage(Message):
             pass
 
         node.routing_table[self.channel].remove(self.sender)
+
+
+@Message.register(int(MessageType.ADD_GROUP))
+class AddGroupMessage(BroadcastMessage):
+    __slots__ = ()
+
+    def __init__(
+        self,
+        compress: int = 0,
+        seq: Optional[Tuple[int, int]] = None,
+        sender: bytes = b'',
+        channel: int = 0,
+        payload: str = ''
+    ):
+        super().__init__(compress, seq, sender, channel, payload)
+        self.message_type = MessageType.ADD_GROUP
+        self.payload: str
+
+    def react(self, node: KademliaNode, addr: Tuple[Any, ...], sock: SocketType) -> bool:
+        """If unseen, propogate the message to your other peers.
+
+        Broadcasting in this strategy will have n nodes send O(k * 2^b * log_{2^b}(n)) messages, assuming all nodes
+        agree on b. Note that early on this will appear to scale O(n^2), so for small groups consider using multicast
+        messages instead. This transition usually occurs around 20-80 nodes, but please consult your particular
+        values of k, b, and h to be sure. It should be approximately (n-1)^2 = 2^b * hk * log_{2^b}(n)
+
+        Note
+        ----
+        Unlike other react() methods, this one has a meaningful return. True indicates that it is a new message, False
+        that it's a repeat.
+        """
+        if super().react(node, addr, sock):
+            if self.payload in node.groups:
+                members = node.groups[self.channel][self.payload]
+                comparison = members.copy()
+                members.append(self.sender)
+                if comparison != members:
+                    node.send_all(AddGroupMessage(payload=self.payload, channel=self.channel))
+            return True
+        return False

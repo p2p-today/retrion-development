@@ -312,12 +312,12 @@ class KademliaNode:
         else:
             message.compress = CompressType.PLAIN
         if not isinstance(message, IdentifyMessage):  # IDENTIFY doesn't want an ACK, it wants a HELLO
-            self.awaiting_ack[message.seq] = message
+            self.awaiting_ack[message.nonce] = message
 
             def stale():
                 """If a message wasn't ACK'd, mark a miss."""
-                if message.seq in self.awaiting_ack:
-                    del self.awaiting_ack[message.seq]
+                if message.nonce in self.awaiting_ack:
+                    del self.awaiting_ack[message.nonce]
                     peer = self.routing_table.by_address(addr)
                     if peer:
                         peer.local.misses += 1

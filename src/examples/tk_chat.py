@@ -70,7 +70,7 @@ def make_window(port, username, root):
     def message_received(event):                    # when we get a message
         message = queue.get()                       # grab it from the queue
         sender_id, input_get = message.payload      # grab the sender's name and message
-        t = localtime(message.seq[0] / 1000)        # convert from Hybrid Logical Clock to local time
+        t = localtime(message.nonce[0] / 1000)        # convert from Hybrid Logical Clock to local time
         messages.insert(                            # add to the chat log
             INSERT,
             '[%02i:%02i:%02i] %s: %s\n' % (t.tm_hour, t.tm_min, t.tm_sec, sender_id, input_get)
