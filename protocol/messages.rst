@@ -205,8 +205,20 @@ with the weights of each message's enabled targets acting as the weights of each
 Flood
 ~~~~~
 
+This routing strategy is a naive flooding of the network. Nodes are required to keep track of the unique identifiers (tuple of time, nonce, sender, channel) for any flood message they received in the last several minutes. If an incoming message is in this list, they should discard it. Otherwise they should forward it to all connected peers.
+
+This strategy is obviously non-optimal, but it is very reliable, and can be used in situations where tree delivery might not be sufficiently certain.
+
 Tree
 ~~~~
+
+Messages sent with this strategy will recursively delegate responsibility for forwarding messages they have not seen to a small set of nodes in each Kademlia subtree. They do this according to the algorithm in "Solution for the broadcasting in the Kademlia peer-to-peer overlay".
+
+The number of messages sent is highly path-dependent. If :math:`p=1` (defined below), then it will be strictly :math:`n-1`. Otherwise, simulations in the defining paper seem to indicate that it scales linearly with :math:`O(np)`, but formal analysis was not provided. Delivery time is expected to be :math:`O(\log_{2^b}(n))`, assuming nodes agree on :math:`b`.
+
+Height: refers to the number of bits in the prefix you are responsible for. Note that this value is required to not assume any particular value of :math:`b`, so receiving nodes are required to translate this to their particular routing table.
+
+Parallelization: This parameter, referred to as :math:`k_b` in the defining paper and as :math:`p` here, refers to the number of nodes in each subtree that your node should delegate to. If this parameter is not included, it should default to 3. Note that this parameter will also affect reliability of delivery, where the proportion of nodes that receive the message is approximately :math:`(1 - (L^p)/2)^{\log_2(n)}`, where :math:`L` is the probability of a message being lost or maliciously not forwarded.
 
 Serialization
 +++++++++++++
