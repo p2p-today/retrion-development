@@ -4,3 +4,7 @@
 .vscode/**
 .coverage
 coverage.xml
+protocol/_build
+.benchmarks
+.pytest_cache
+.vscode

@@ -1,3 +1,5 @@
 **.pyc
 **/.pytest_cache/**
 **/.mypy_cache/**
+.benchmarks
+.pytest_cache
